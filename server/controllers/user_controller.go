@@ -7,6 +7,7 @@ import (
 
 	"github.com/TuanNghia295/Movie-Streaming-App/server/database"
 	"github.com/TuanNghia295/Movie-Streaming-App/server/models"
+	"github.com/TuanNghia295/Movie-Streaming-App/server/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -115,5 +116,62 @@ func UserList() gin.HandlerFunc {
 			return
 		}
 		ctx.JSON(http.StatusOK, users)
+	}
+}
+
+func LoginUser() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var userLogin models.UserLogin // Dữ liệu mà user gửi về
+
+		if err := ctx.ShouldBindJSON(&userLogin); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input data"})
+			return
+		}
+
+		// Request, hàm này gọi quá 10 giây thì tự cancel
+		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		defer cancel()
+
+		var foundUser models.User
+
+		err := userCollection.FindOne(c, bson.M{
+			"email": userLogin.Email,
+		}).Decode(&foundUser)
+
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+			return
+		}
+
+		err = bcrypt.CompareHashAndPassword([]byte(foundUser.Password), []byte(userLogin.Password))
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+			return
+		}
+
+		token, refreshToken, err := utils.GenerateAllTokens(foundUser.Email, foundUser.FirstName, foundUser.LastName, foundUser.Role, foundUser.UserID)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+		}
+
+		err = utils.UpdateAllToken(foundUser.UserID, token, refreshToken)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update token"})
+			return
+		}
+
+		ctx.JSON(http.StatusOK, models.UserResponse{
+			UserID:          foundUser.UserID,
+			FirstName:       foundUser.FirstName,
+			LastName:        foundUser.LastName,
+			Email:           foundUser.Email,
+			Role:            foundUser.Role,
+			Token:           token,
+			RefreshToken:    refreshToken,
+			FavouriteGenres: foundUser.FavouritesGenres,
+		})
 	}
 }
