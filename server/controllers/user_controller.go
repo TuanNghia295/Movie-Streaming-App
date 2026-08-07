@@ -163,6 +163,9 @@ func LoginUser() gin.HandlerFunc {
 			return
 		}
 
+		ctx.SetCookie("token", token, 3600, "/", "", true, true) // secure, httpOnly
+		ctx.SetCookie("refresh_token", refreshToken, 7*24*3600, "/", "", true, true)
+
 		ctx.JSON(http.StatusOK, models.UserResponse{
 			UserID:          foundUser.UserID,
 			FirstName:       foundUser.FirstName,

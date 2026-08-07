@@ -2,10 +2,12 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
 	"github.com/TuanNghia295/Movie-Streaming-App/server/database"
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -59,10 +61,10 @@ func GenerateAllTokens(email, firstName, lastName, role, userId string) (string,
 	}
 
 	refreshToken := jwt.NewWithClaims(jwt.SigningMethodES256, refreshClaims)
-	signedRefreshToken, error := refreshToken.SignedString([]byte(SECRET_REFRESH_KEY))
+	signedRefreshToken, err := refreshToken.SignedString([]byte(SECRET_REFRESH_KEY))
 
 	if err != nil {
-		return "", "", error
+		return "", "", err
 	}
 
 	return signedToken, signedRefreshToken, nil
@@ -89,4 +91,47 @@ func UpdateAllToken(userId, token, refreshToken string) (err error) {
 	}
 
 	return nil
+}
+
+func GetAccessToken(c *gin.Context) (string, error) {
+	authHeader := c.Request.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("Authorization header required")
+	}
+
+	tokenString := authHeader[len("Bearer "):]
+
+	if tokenString == "" {
+		return "", errors.New("Bearer token is required")
+	}
+
+	return tokenString, nil
+}
+
+// ValidateToken parses and verifies a JWT access token, returning its claims if valid.
+func ValidateToken(tokenString string) (*SignedDetails, error) {
+	claims := &SignedDetails{} // Tạo một instance của SignedDetails để lưu trữ các claims từ token.
+
+	// Parse token và verify chữ ký; callback trả về key dùng để verify.
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(SECRET_KEY), nil
+	})
+
+	// Lỗi parse/verify (sai chữ ký, sai định dạng, hết hạn theo lib...).
+	if err != nil {
+		return nil, err
+	}
+
+	// Chặn tấn công "algorithm confusion": token phải đúng thuật toán ES256
+	// như lúc ký ở GenerateAllTokens, không chấp nhận thuật toán khác.
+	if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
+		return nil, errors.New("unexpected signing method")
+	}
+
+	// Kiểm tra hết hạn thủ công (thường dư thừa vì ParseWithClaims đã tự check exp).
+	if claims.ExpiresAt.Time.Before(time.Now()) {
+		return nil, errors.New("token has expired")
+	}
+
+	return claims, nil
 }

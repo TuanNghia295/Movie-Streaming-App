@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/TuanNghia295/Movie-Streaming-App/server/controllers"
+	"github.com/TuanNghia295/Movie-Streaming-App/server/routes"
 	"github.com/gin-gonic/gin" // Router Library
 )
 
@@ -14,12 +14,8 @@ func main() {
 		ctx.String(200, "Server is running")
 	})
 
-	router.GET("/movies", controllers.GetMovies())
-	router.GET("/movies/:imdb_id", controllers.GetMovie())
-	router.POST("/addmovie", controllers.AddMovie())
-	router.POST("/register", controllers.RegisterUser())
-	router.GET("/login", controllers.LoginUser())
-	router.GET("/user", controllers.UserList())
+	routes.PublicRoutes(router)
+	routes.SetuptProtectedRoutes(router)
 
 	if err := router.Run(":8080"); err != nil {
 		fmt.Println("Failed to start server", err)
