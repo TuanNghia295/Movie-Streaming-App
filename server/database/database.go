@@ -18,12 +18,13 @@ func Connect() *mongo.Client {
 	}
 
 	MongoDB := os.Getenv("MONGODB_URI")
-	serverAPI := options.ServerAPI(options.ServerAPIVersion1)
-	opts := options.Client().ApplyURI("mongodb+srv://tuannghiait2905_db_user:h7AjpdlDthXkG1fO@cluster0.4amosxs.mongodb.net/?appName=Cluster0").SetServerAPIOptions(serverAPI)
 
 	if MongoDB == "" {
 		log.Fatal("MONGODB_URI not set!")
 	}
+
+	serverAPI := options.ServerAPI(options.ServerAPIVersion1)
+	opts := options.Client().ApplyURI(MongoDB).SetServerAPIOptions(serverAPI)
 
 	fmt.Println("MONGODB_URI: ", MongoDB)
 

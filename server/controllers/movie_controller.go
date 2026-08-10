@@ -2,18 +2,25 @@ package controllers
 
 import (
 	"context"
+	"errors"
+	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/TuanNghia295/Movie-Streaming-App/server/database"
 	"github.com/TuanNghia295/Movie-Streaming-App/server/models"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/joho/godotenv"
+	"github.com/tmc/langchaingo/llms/openai"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 var movieCollection *mongo.Collection = database.OpenCollection("movies")
+var rankingCollection *mongo.Collection = database.OpenCollection("rankings")
 var validate = validator.New()
 
 func GetMovies() gin.HandlerFunc {
@@ -109,4 +116,147 @@ func AddMovie() gin.HandlerFunc {
 		c.JSON(http.StatusOK, result)
 
 	}
+}
+
+func AdminReviewUpdate() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		movieId := ctx.Param("imdb_id")
+
+		if movieId == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Movie ID required"})
+			return
+		}
+
+		var req struct {
+			AdminReview string `json:"admin_review"`
+		}
+
+		var resp struct {
+			RankingName string `json:"ranking_name"`
+			AdminReview string `json:"admin_review"`
+		}
+
+		// ShouldBind: là 1 method của gin.Context struct, nó được sử dụng để liên kết dữ liệu từ request body (thường là JSON) vào một struct trong Go.
+		// Nó tự động ánh xạ các trường trong JSON với các trường tương ứng trong struct dựa trên tên và kiểu dữ liệu của chúng.
+		// Nếu việc liên kết thành công, nó sẽ điền dữ liệu từ payload JSON vào struct.
+		if err := ctx.ShouldBind(&req); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+			return
+		}
+
+		sentiment, rankVal, err := GetReviewRanking(req.AdminReview)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting review ranking"})
+			return
+		}
+
+		filter := bson.M{"imdb_id": movieId}
+
+		update := bson.M{
+			"$set": bson.M{
+				"admin_review": req.AdminReview,
+				"ranking": bson.M{
+					"ranking_value": rankVal,
+					"ranking_name":  sentiment,
+				},
+			},
+		}
+
+		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+
+		result, err := movieCollection.UpdateOne(c, filter, update)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Error updating movie"})
+		}
+
+		if result.MatchedCount == 0 {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Movie not found"})
+			return
+		}
+
+		resp.RankingName = sentiment
+		resp.AdminReview = req.AdminReview
+
+		ctx.JSON(http.StatusOK, resp)
+
+	}
+}
+
+func GetReviewRanking(admin_review string) (string, int, error) {
+	rankings, err := GetRanking()
+
+	if err != nil {
+		return "", 0, err
+	}
+
+	sentimentDelimited := ""
+
+	for _, ranking := range rankings {
+		if ranking.RankingValue != 999 {
+			sentimentDelimited = sentimentDelimited + ranking.RankingName + ","
+		}
+	}
+
+	sentimentDelimited = strings.Trim(sentimentDelimited, ",")
+
+	err = godotenv.Load(".env")
+	if err != nil {
+		log.Println("Warning: .env file not found")
+	}
+
+	OpenAiApiKey := os.Getenv("OPENAI_API_KEY")
+	if OpenAiApiKey == "" {
+		return "", 0, errors.New("could not read OPENAI_API_KEY")
+	}
+
+	llm, err := openai.New(openai.WithToken(OpenAiApiKey))
+
+	if err != nil {
+		return "", 0, err
+	}
+
+	baseGromptTemplate := os.Getenv("BASE_PROMPT_TEMPLATE")
+	basePrompt := strings.Replace(baseGromptTemplate, "{rankings}", sentimentDelimited, 1)
+
+	if baseGromptTemplate == "" {
+		return "", 0, errors.New("could not read BASE_PROMPT_TEMPLATE")
+	}
+
+	response, err := llm.Call(context.Background(), basePrompt+admin_review)
+
+	if err != nil {
+		return "", 0, err
+	}
+
+	rankVal := 0
+	for _, ranking := range rankings {
+		if ranking.RankingName == response {
+			rankVal = ranking.RankingValue
+			break
+		}
+	}
+
+	return response, rankVal, nil
+}
+
+func GetRanking() ([]models.Ranking, error) {
+	var rankings []models.Ranking
+
+	var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+	defer cancel()
+
+	cursor, err := rankingCollection.Find(ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+
+	defer cursor.Close(ctx)
+	if err := cursor.All(ctx, &rankings); err != nil {
+		return nil, err
+	}
+
+	return rankings, nil
 }
