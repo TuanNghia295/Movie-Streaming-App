@@ -26,7 +26,7 @@ var validate = validator.New()
 
 func GetMovies(client *mongo.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+		ctx, cancel := context.WithTimeout(c, 100*time.Second)
 
 		defer cancel()
 
@@ -56,7 +56,7 @@ func GetMovies(client *mongo.Client) gin.HandlerFunc {
 
 func GetGenres(client *mongo.Client) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		c, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+		c, cancel := context.WithTimeout(ctx, 100*time.Second)
 		defer cancel()
 
 		var movieCollection *mongo.Collection = database.OpenCollection("movies", client)
@@ -95,7 +95,7 @@ func GetGenres(client *mongo.Client) gin.HandlerFunc {
 func GetMovie(client *mongo.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		//  Nếu thao tác dùng ctx này chạy quá 100s mà chưa xong, nó sẽ tự động bị hủy
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+		ctx, cancel := context.WithTimeout(c, 100*time.Second)
 
 		// Đảm bảo cancel() luôn được gọi khi handler kết thúc (dù thành công, lỗi, panic...), để giải phóng tài nguyên gắn với context
 		defer cancel()
@@ -126,7 +126,7 @@ func GetMovie(client *mongo.Client) gin.HandlerFunc {
 func AddMovie(client *mongo.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// If this interaction run more than 10 second, it will be canceled
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+		ctx, cancel := context.WithTimeout(c, 100*time.Second)
 
 		// Make sure cancel() always be called when handler end eventhough success or error. To reduce resource and context. It prevent leak data
 		defer cancel()
@@ -197,7 +197,7 @@ func AdminReviewUpdate(client *mongo.Client) gin.HandlerFunc {
 			return
 		}
 
-		sentiment, rankVal, err := GetReviewRanking(req.AdminReview, client)
+		sentiment, rankVal, err := GetReviewRanking(req.AdminReview, client, ctx)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting review ranking"})
 			return
@@ -215,7 +215,7 @@ func AdminReviewUpdate(client *mongo.Client) gin.HandlerFunc {
 			},
 		}
 
-		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		var c, cancel = context.WithTimeout(ctx, 100*time.Second)
 		defer cancel()
 		var movieCollection *mongo.Collection = database.OpenCollection("movies", client)
 		result, err := movieCollection.UpdateOne(c, filter, update)
@@ -237,8 +237,8 @@ func AdminReviewUpdate(client *mongo.Client) gin.HandlerFunc {
 	}
 }
 
-func GetReviewRanking(admin_review string, client *mongo.Client) (string, int, error) {
-	rankings, err := GetRanking(client)
+func GetReviewRanking(admin_review string, client *mongo.Client, c *gin.Context) (string, int, error) {
+	rankings, err := GetRanking(client, c)
 
 	if err != nil {
 		return "", 0, err
@@ -294,10 +294,10 @@ func GetReviewRanking(admin_review string, client *mongo.Client) (string, int, e
 	return response, rankVal, nil
 }
 
-func GetRanking(client *mongo.Client) ([]models.Ranking, error) {
+func GetRanking(client *mongo.Client, c *gin.Context) ([]models.Ranking, error) {
 	var rankings []models.Ranking
 
-	var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+	var ctx, cancel = context.WithTimeout(c, 100*time.Second)
 	var rankingCollection *mongo.Collection = database.OpenCollection("rankings", client)
 
 	defer cancel()
@@ -323,7 +323,7 @@ func GetRecommendedMovies(client *mongo.Client) gin.HandlerFunc {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
 		}
 
-		favourite_genres, err := GetUserFavouriteGenres(userId, client)
+		favourite_genres, err := GetUserFavouriteGenres(userId, client, ctx)
 
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -352,7 +352,7 @@ func GetRecommendedMovies(client *mongo.Client) gin.HandlerFunc {
 
 		filter := bson.M{"genre.genre_name": bson.M{"$in": favourite_genres}}
 
-		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		var c, cancel = context.WithTimeout(ctx, 100*time.Second)
 		defer cancel() // run this function after 10 second
 
 		var movieCollection *mongo.Collection = database.OpenCollection("movies", client)
@@ -378,7 +378,7 @@ func GetRecommendedMovies(client *mongo.Client) gin.HandlerFunc {
 	}
 }
 
-func GetUserFavouriteGenres(userId string, client *mongo.Client) ([]string, error) {
+func GetUserFavouriteGenres(userId string, client *mongo.Client, c *gin.Context) ([]string, error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel() // run this function after 10 second
 
