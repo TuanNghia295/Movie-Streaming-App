@@ -7,10 +7,11 @@ import (
 )
 
 func SetuptProtectedRoutes(router *gin.Engine) {
-	router.Use(middleware.AuthMiddleWare())
+	protected := router.Group("/")
+	protected.Use(middleware.AuthMiddleWare())
 
-	router.GET("/movies/:imdb_id", controllers.GetMovie())
-	router.POST("/addmovie", controllers.AddMovie())
-	router.PATCH("/updatereview/:imdb_id", controllers.AdminReviewUpdate())
-
+	protected.GET("/movies/:imdb_id", controllers.GetMovie())
+	protected.POST("/addmovie", controllers.AddMovie())
+	protected.PATCH("/updatereview/:imdb_id", controllers.AdminReviewUpdate())
+	protected.GET("/recommededMovies", controllers.GetRecommendedMovies())
 }

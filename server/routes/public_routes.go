@@ -8,6 +8,6 @@ import (
 func PublicRoutes(router *gin.Engine) {
 	router.GET("/movies", controllers.GetMovies())
 	router.POST("/register", controllers.RegisterUser())
-	router.GET("/login", controllers.LoginUser())
+	router.POST("/login", controllers.LoginUser())
 	router.GET("/user", controllers.UserList())
 }

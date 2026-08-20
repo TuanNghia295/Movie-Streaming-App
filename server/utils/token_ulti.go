@@ -40,7 +40,7 @@ func GenerateAllTokens(email, firstName, lastName, role, userId string) (string,
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signedToken, err := token.SignedString([]byte(SECRET_KEY))
 
 	if err != nil {
@@ -60,7 +60,7 @@ func GenerateAllTokens(email, firstName, lastName, role, userId string) (string,
 		},
 	}
 
-	refreshToken := jwt.NewWithClaims(jwt.SigningMethodES256, refreshClaims)
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
 	signedRefreshToken, err := refreshToken.SignedString([]byte(SECRET_REFRESH_KEY))
 
 	if err != nil {
@@ -122,9 +122,9 @@ func ValidateToken(tokenString string) (*SignedDetails, error) {
 		return nil, err
 	}
 
-	// Chặn tấn công "algorithm confusion": token phải đúng thuật toán ES256
+	// Chặn tấn công "algorithm confusion": token phải đúng thuật toán HS256
 	// như lúc ký ở GenerateAllTokens, không chấp nhận thuật toán khác.
-	if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
+	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 		return nil, errors.New("unexpected signing method")
 	}
 
@@ -134,4 +134,36 @@ func ValidateToken(tokenString string) (*SignedDetails, error) {
 	}
 
 	return claims, nil
+}
+
+func GetUserIdFromContext(c *gin.Context) (string, error) {
+	userId, exists := c.Get("userId")
+
+	if !exists {
+		return "", errors.New("userId does not exists in this context")
+	}
+
+	id, ok := userId.(string) // return userId as a string
+
+	if !ok {
+		return "", errors.New("unable to retrieve userId")
+	}
+
+	return id, nil
+}
+
+func GetUserRoleFromContext(c *gin.Context) (string, error) {
+	role, exists := c.Get("role")
+
+	if !exists {
+		return "", errors.New("user role does not exists in this context")
+	}
+
+	id, ok := role.(string) // return role as a string
+
+	if !ok {
+		return "", errors.New("unable to retrieve role")
+	}
+
+	return id, nil
 }

@@ -33,7 +33,7 @@ type User struct {
 	UpdatedAt        time.Time     `json:"updated_at" bson:"updated_at"`
 	Token            string        `json:"token" bson:"token"`
 	RefreshToken     string        `json:"refresh_token" bson:"refresh_token"`
-	FavouritesGenres []Genre       `json:"favourite_genres" bson:"favourite_genres" validate:"required,dive"`
+	FavouritesGenres []Genre       `json:"favourite_genres" bson:"favourite_genres" validate:"dive"`
 }
 
 type UserLogin struct {

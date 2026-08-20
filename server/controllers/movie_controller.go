@@ -6,17 +6,20 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/TuanNghia295/Movie-Streaming-App/server/database"
 	"github.com/TuanNghia295/Movie-Streaming-App/server/models"
+	"github.com/TuanNghia295/Movie-Streaming-App/server/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
 	"github.com/tmc/langchaingo/llms/openai"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 var movieCollection *mongo.Collection = database.OpenCollection("movies")
@@ -120,6 +123,16 @@ func AddMovie() gin.HandlerFunc {
 
 func AdminReviewUpdate() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		role, err := utils.GetUserRoleFromContext(ctx)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Role not found in context"})
+			return
+		}
+
+		if role != "ADMIN" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "User must be part of the ADMIN role"})
+			return
+		}
 		movieId := ctx.Param("imdb_id")
 
 		if movieId == "" {
@@ -259,4 +272,116 @@ func GetRanking() ([]models.Ranking, error) {
 	}
 
 	return rankings, nil
+}
+
+func GetRecommendedMovies() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		userId, err := utils.GetUserIdFromContext(ctx)
+
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
+		}
+
+		favourite_genres, err := GetUserFavouriteGenres(userId)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		err = godotenv.Load(".env")
+		if err != nil {
+			log.Println("Warning: .env file not found")
+		}
+
+		var recommendedMovieLimitVal int64 = 5
+
+		recommendedMovieLimitStr := os.Getenv("RECOMMENED_MOVIE_LIMIT")
+
+		if recommendedMovieLimitStr != "" {
+			recommendedMovieLimitVal, _ = strconv.ParseInt(recommendedMovieLimitStr, 10, 64)
+		}
+
+		// Create a find options and then sort the list
+		findOptions := options.Find()
+
+		findOptions.SetSort(bson.D{{Key: "ranking.ranking_value", Value: 1}})
+
+		findOptions.SetLimit(recommendedMovieLimitVal)
+
+		filter := bson.M{"genre.genre_name": bson.M{"$in": favourite_genres}}
+
+		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel() // run this function after 10 second
+
+		cursor, err := movieCollection.Find(c, filter, findOptions)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching recommended movies"})
+			return
+		}
+
+		// Clear up
+		defer cursor.Close(c)
+
+		var recommendedMovies []models.Movie
+
+		if err := cursor.All(c, &recommendedMovies); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctx.JSON(http.StatusOK, recommendedMovies)
+	}
+}
+
+func GetUserFavouriteGenres(userId string) ([]string, error) {
+	var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+	defer cancel() // run this function after 10 second
+
+	filter := bson.M{"user_id": userId}
+
+	projection := bson.M{
+		"favourite_genres.genre_name": 1,
+		"_id":                         0,
+	}
+
+	// SetProjection: is a method provided by the MongoDB Go driver that allows you to specify which fields should be included or excluded in the result of a query.
+	// In this case, it is used to create a projection that includes only the "favourite_genres.genre_name" field and excludes the "_id" field from the query result.
+
+	opts := options.FindOne().SetProjection(projection)
+
+	var result bson.M
+
+	err := userCollection.FindOne(ctx, filter, opts).Decode(&result)
+
+	if err != nil {
+		// If the error is mongo.ErrNoDocuments, it means that no document was found matching the filter criteria.
+		// In this case, we return an empty slice of strings and a nil error to indicate that there are no favorite genres for the user.
+		if err == mongo.ErrNoDocuments {
+			return []string{}, nil
+		}
+	}
+
+	favGenresArray, ok := result["favourite_genres"].(bson.A)
+
+	if !ok {
+		return []string{}, errors.New("unable to retrieve favourite genres for user")
+	}
+
+	var genreNames []string
+
+	for _, item := range favGenresArray {
+		if genreMap, ok := item.(bson.D); ok {
+			for _, elem := range genreMap {
+				if elem.Key == "genre_name" {
+					if name, ok := elem.Value.(string); ok {
+						genreNames = append(genreNames, name)
+					}
+				}
+			}
+		}
+	}
+
+	return genreNames, nil
 }

@@ -42,6 +42,10 @@ func RegisterUser() gin.HandlerFunc {
 			return
 		}
 
+		if user.Role == "" {
+			user.Role = "USER"
+		}
+
 		validate := validator.New()
 
 		if err := validate.Struct(user); err != nil {
@@ -53,6 +57,7 @@ func RegisterUser() gin.HandlerFunc {
 
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+			return
 		}
 
 		var ct, cancel = context.WithTimeout(context.Background(), 100*time.Second)
@@ -154,6 +159,7 @@ func LoginUser() gin.HandlerFunc {
 
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+			return
 		}
 
 		err = utils.UpdateAllToken(foundUser.UserID, token, refreshToken)
