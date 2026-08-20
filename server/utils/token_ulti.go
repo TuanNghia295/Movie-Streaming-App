@@ -24,7 +24,7 @@ type SignedDetails struct {
 
 var SECRET_KEY string = os.Getenv("SECRET_KEY")
 var SECRET_REFRESH_KEY string = os.Getenv("SECRET_REFRESH_KEY")
-var userCollection *mongo.Collection = database.OpenCollection("users")
+var userCollection *mongo.Collection = database.OpenCollection("users", &mongo.Client{})
 
 func GenerateAllTokens(email, firstName, lastName, role, userId string) (string, string, error) {
 	claims := &SignedDetails{
@@ -79,8 +79,8 @@ func UpdateAllToken(userId, token, refreshToken string) (err error) {
 	updateData := bson.M{
 		"$set": bson.M{
 			"token":         token,
-			"refrest_token": refreshToken,
-			"upadate_at":    updateAt,
+			"refresh_token": refreshToken,
+			"updated_at":    updateAt,
 		},
 	}
 
@@ -131,6 +131,29 @@ func ValidateToken(tokenString string) (*SignedDetails, error) {
 	// Kiểm tra hết hạn thủ công (thường dư thừa vì ParseWithClaims đã tự check exp).
 	if claims.ExpiresAt.Time.Before(time.Now()) {
 		return nil, errors.New("token has expired")
+	}
+
+	return claims, nil
+}
+
+// ValidateRefreshToken parses and verifies a JWT refresh token, returning its claims if valid.
+func ValidateRefreshToken(tokenString string) (*SignedDetails, error) {
+	claims := &SignedDetails{}
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(SECRET_REFRESH_KEY), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		return nil, errors.New("unexpected signing method")
+	}
+
+	if claims.ExpiresAt.Time.Before(time.Now()) {
+		return nil, errors.New("refresh token has expired")
 	}
 
 	return claims, nil

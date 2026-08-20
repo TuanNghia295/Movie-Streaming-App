@@ -15,8 +15,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var userCollection *mongo.Collection = database.OpenCollection("users")
-
 func HashPassword(password string) (string, error) {
 	/*
 		bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost) là 1 hàm trong gói bcrypt của Go, được sử dụng để tạo ra 1 hash từ password.
@@ -33,7 +31,7 @@ func HashPassword(password string) (string, error) {
 	return string(HashPassword), nil
 }
 
-func RegisterUser() gin.HandlerFunc {
+func RegisterUser(client *mongo.Client) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var user models.User
 
@@ -52,6 +50,8 @@ func RegisterUser() gin.HandlerFunc {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Vailidation failed", "details": err.Error()})
 			return
 		}
+
+		var userCollection *mongo.Collection = database.OpenCollection("users", client)
 
 		hashedPassword, err := HashPassword(user.Password)
 
@@ -92,13 +92,14 @@ func RegisterUser() gin.HandlerFunc {
 	}
 }
 
-func UserList() gin.HandlerFunc {
+func UserList(client *mongo.Client) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		c, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 
 		defer cancel()
 
 		var users []models.User
+		var userCollection *mongo.Collection = database.OpenCollection("users", client)
 
 		cursor, err := userCollection.Find(c, bson.M{})
 
@@ -124,7 +125,7 @@ func UserList() gin.HandlerFunc {
 	}
 }
 
-func LoginUser() gin.HandlerFunc {
+func LoginUser(client *mongo.Client) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var userLogin models.UserLogin // Dữ liệu mà user gửi về
 
@@ -139,7 +140,7 @@ func LoginUser() gin.HandlerFunc {
 		defer cancel()
 
 		var foundUser models.User
-
+		var userCollection *mongo.Collection = database.OpenCollection("users", client)
 		err := userCollection.FindOne(c, bson.M{
 			"email": userLogin.Email,
 		}).Decode(&foundUser)
@@ -182,5 +183,99 @@ func LoginUser() gin.HandlerFunc {
 			RefreshToken:    refreshToken,
 			FavouriteGenres: foundUser.FavouritesGenres,
 		})
+	}
+}
+
+func RefreshTokenHandler(client *mongo.Client) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		refreshToken, err := ctx.Cookie("refresh_token")
+
+		if err != nil || refreshToken == "" {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token is required"})
+			return
+		}
+
+		claims, err := utils.ValidateRefreshToken(refreshToken)
+
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired refresh token"})
+			return
+		}
+
+		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+
+		var userCollection *mongo.Collection = database.OpenCollection("users", client)
+
+		var foundUser models.User
+
+		err = userCollection.FindOne(c, bson.M{"user_id": claims.UserId}).Decode(&foundUser)
+
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+			return
+		}
+
+		// Ensure the refresh token hasn't already been rotated/invalidated (e.g. by a prior refresh or logout)
+		if foundUser.RefreshToken != refreshToken {
+			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token is no longer valid"})
+			return
+		}
+
+		newToken, newRefreshToken, err := utils.GenerateAllTokens(foundUser.Email, foundUser.FirstName, foundUser.LastName, foundUser.Role, foundUser.UserID)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+			return
+		}
+
+		err = utils.UpdateAllToken(foundUser.UserID, newToken, newRefreshToken)
+
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update token"})
+			return
+		}
+
+		ctx.SetCookie("token", newToken, 3600, "/", "", true, true)
+		ctx.SetCookie("refresh_token", newRefreshToken, 7*24*3600, "/", "", true, true)
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"token":         newToken,
+			"refresh_token": newRefreshToken,
+		})
+	}
+}
+
+func Logout(client *mongo.Client) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		userId, err := utils.GetUserIdFromContext(ctx)
+
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
+			return
+		}
+
+		var c, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+
+		var userCollection *mongo.Collection = database.OpenCollection("users", client)
+
+		update := bson.M{
+			"$set": bson.M{
+				"token":         "",
+				"refresh_token": "",
+				"updated_at":    time.Now(),
+			},
+		}
+
+		if _, err := userCollection.UpdateOne(c, bson.M{"user_id": userId}, update); err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to logout"})
+			return
+		}
+
+		ctx.SetCookie("token", "", -1, "/", "", true, true)
+		ctx.SetCookie("refresh_token", "", -1, "/", "", true, true)
+
+		ctx.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 	}
 }
